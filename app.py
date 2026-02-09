@@ -2,96 +2,102 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(page_title="Contador de Pendências", layout="wide")
+st.set_page_config(page_title="Monitoramento AG", layout="wide")
 
 def process_data(file):
     try:
         file.seek(0)
-        # Lemos o arquivo bruto sem cabeçalho primeiro para entender a estrutura
+        # Leitura bruta para evitar que o pandas ignore colunas ou mude nomes
         df_raw = pd.read_csv(
             file, 
             sep=';', 
             encoding='latin1', 
             dtype=str, 
-            header=None,        # Lemos sem cabeçalho para tratar as linhas 0 e 1 manualmente
+            header=None,
             keep_default_na=False, 
             na_filter=False
         )
         
-        # Linha 1 do CSV (índice 1) geralmente tem o nome das atividades
+        # A linha 1 (índice 1) contém os nomes das atividades
         atividades_nomes = df_raw.iloc[1]
         
-        # Dados começam na linha 2 (índice 2)
+        # Os dados dos alunos começam na linha 2
         df_dados = df_raw.iloc[2:].reset_index(drop=True)
         
-        pendencias = []
+        lista_ag = []
 
-        # Varredura
         for _, row in df_dados.iterrows():
-            # Pegamos o Tutor (coluna 3) e Aluno (coluna 0)
+            # Coluna 3 costuma ser o Tutor, Coluna 0 o Aluno
             tutor_nome = str(row[3]).strip()
             aluno_nome = str(row[0]).strip()
             
-            # Percorremos apenas as colunas de atividades (da 5 em diante)
+            # Varre as colunas de atividades (da 5 em diante)
             for i in range(5, len(row)):
                 valor = str(row[i]).strip().upper()
-                nome_coluna = str(atividades_nomes[i]).upper()
+                nome_atividade = str(atividades_nomes[i]).upper()
 
-                # FILTRO CRÍTICO: Só conta se o valor for NA/AG 
-                # E se a coluna não for um resumo de notas ou vazia
-                if valor in ['NA', 'AG']:
-                    # Ignora colunas que geralmente somam notas ou estão vazias
-                    if any(x in nome_coluna for x in ["NOTA", "TOTAL", "SOMA", "MÉDIA", "UNNAMED", "NAN", "PRESENÇA"]):
+                # FOCO EXCLUSIVO NO "AG"
+                if valor == 'AG':
+                    # Filtro para ignorar colunas que não são tarefas reais
+                    if any(x in nome_atividade for x in ["NOTA", "TOTAL", "SOMA", "MÉDIA", "PRESENÇA", "NAN", "UNNAMED"]):
                         continue
                     
-                    # Se o nome da coluna for vazio, também ignoramos (evita contar lixo no fim da linha)
-                    if nome_coluna == "" or nome_coluna == "NAN":
+                    if nome_atividade == "" or nome_atividade == "NAN":
                         continue
 
-                    pendencias.append({
+                    lista_ag.append({
                         'Tutor': tutor_nome,
                         'Aluno': aluno_nome,
-                        'Atividade': nome_coluna,
-                        'Status': valor
+                        'Atividade': nome_atividade,
+                        'Status': 'AG'
                     })
         
-        return pd.DataFrame(pendencias)
+        return pd.DataFrame(lista_ag)
     except Exception as e:
-        st.error(f"Erro no processamento: {e}")
+        st.error(f"Erro ao processar arquivo: {e}")
         return pd.DataFrame()
 
-st.title("📊 Monitoramento de Pendências Real")
+# --- Interface ---
+st.title("📊 Monitoramento de Status: AG")
 
-file = st.file_uploader("Suba o arquivo CSV", type=['csv'])
+file = st.file_uploader("Suba o arquivo CSV (ponto e vírgula)", type=['csv'])
 
 if file:
-    df_res = process_data(file)
+    df_ag = process_data(file)
     
-    if not df_res.empty:
-        # Métricas
-        c1, c2, c3 = st.columns(3)
-        count_na = len(df_res[df_res['Status'] == 'NA'])
-        count_ag = len(df_res[df_res['Status'] == 'AG'])
-        
-        c1.metric("Total de Pendências", len(df_res))
-        c2.metric("Total de 'NA'", count_na, delta_color="inverse")
-        c3.metric("Total de 'AG'", count_ag)
+    if not df_ag.empty:
+        # Métrica Principal
+        st.metric("Total de ocorrências 'AG'", len(df_ag))
+
+        st.divider()
 
         # Ranking de Tutores (Decrescente)
-        st.subheader("🏆 Ranking de Pendências por Tutor")
-        ranking = df_res['Tutor'].value_counts().reset_index()
-        ranking.columns = ['Tutor', 'Total']
-        ranking = ranking.sort_values(by='Total', ascending=False)
+        st.subheader("🏆 Ranking de AG por Tutor")
+        ranking = df_ag['Tutor'].value_counts().reset_index()
+        ranking.columns = ['Tutor', 'Quantidade']
+        ranking = ranking.sort_values(by='Quantidade', ascending=False)
 
-        fig = px.bar(ranking, x='Tutor', y='Total', text='Total', 
-                     color='Total', color_continuous_scale='Reds')
+        fig = px.bar(
+            ranking, 
+            x='Tutor', 
+            y='Quantidade', 
+            text='Quantidade',
+            color='Quantidade', 
+            color_continuous_scale='Oranges'
+        )
+        fig.update_traces(textposition='outside')
         st.plotly_chart(fig, use_container_width=True)
 
-        # Tabela para você conferir se os nomes das atividades fazem sentido
-        st.subheader("🔍 Conferência dos Dados (Primeiras 50 linhas)")
-        st.dataframe(df_res.head(50), use_container_width=True)
+        st.divider()
+
+        # Visualização dos Dados
+        st.subheader("📝 Detalhamento dos AGs encontrados")
+        st.dataframe(df_ag, use_container_width=True, hide_index=True)
         
-        csv_export = df_res.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 Baixar Relatório Filtrado", csv_export, "pendencias_reais.csv")
+        # Download
+        csv_export = df_ag.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📥 Baixar Relatório de AG", csv_export, "status_ag.csv")
     else:
-        st.warning("Nenhum 'NA' ou 'AG' válido encontrado após os filtros.")
+        st.warning("Nenhum status 'AG' foi encontrado no arquivo com os filtros aplicados.")
+else:
+    st.info("Aguardando upload do arquivo para análise.")
